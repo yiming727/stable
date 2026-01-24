@@ -1,5 +1,5 @@
 """
-光流法视频稳像 - 支持 IRV 红外视频格式（16位精度版本）
+光流法视频稳像 - 支持 IRV 红外视频格式（16位精度版本 - 无闪烁）
 """
 
 import numpy as np
@@ -29,27 +29,59 @@ def fix_border_u16(frame_u16):
     """修复 16 位图像的边界（使用缩放）"""
     s = frame_u16.shape
     T = cv2.getRotationMatrix2D((s[1] / 2, s[0] / 2), 0, 1.1)
-    # 使用 INTER_LINEAR 插值，保持 16 位精度
     frame = cv2.warpAffine(frame_u16, T, (s[1], s[0]),
                            flags=cv2.INTER_LINEAR,
                            borderMode=cv2.BORDER_REPLICATE)
     return frame
 
 
-def u16_to_gray(img_u16):
-    """将 16 位图像转换为 8 位灰度图（用于特征检测）"""
-    img_min = img_u16.min()
-    img_max = img_u16.max()
-    if img_max > img_min:
-        img_normalized = ((img_u16 - img_min) / (img_max - img_min) * 255).astype(np.uint8)
+def u16_to_gray_global(img_u16, global_min, global_max):
+    """
+    使用全局 min/max 转换为 8 位灰度图 - 避免闪烁
+
+    参数:
+        img_u16: 16位输入图像
+        global_min: 全局最小值
+        global_max: 全局最大值
+    """
+    if global_max > global_min:
+        img_normalized = np.clip(
+            (img_u16 - global_min) / (global_max - global_min) * 255,
+            0,
+            255
+        ).astype(np.uint8)
     else:
         img_normalized = np.zeros_like(img_u16, dtype=np.uint8)
     return img_normalized
 
 
-# ============================================
-# 主程序
-# ============================================
+def compute_global_range(video_path, loader, width, height, n_frames, sample_rate=10):
+    """
+    计算视频的全局温度范围
+
+    参数:
+        sample_rate: 采样率（每隔多少帧采样一次）
+    """
+    print("正在计算全局温度范围...")
+    global_min = np.inf
+    global_max = -np.inf
+
+    sample_indices = range(0, n_frames, sample_rate)
+
+    for i in sample_indices:
+        with open(video_path, "rb") as f:
+            frame_u16 = loader.Open_Frame_IRV(f, i, width, height)
+
+        if frame_u16 is not None:
+            global_min = min(global_min, frame_u16.min())
+            global_max = max(global_max, frame_u16.max())
+
+        if (i + 1) % 100 == 0:
+            print(f"  采样进度: {i + 1}/{n_frames}")
+
+    print(f"全局温度范围: {global_min} - {global_max}")
+    return global_min, global_max
+
 
 SMOOTHING_RADIUS = 100
 video_path = r'./20230831171237_00.IRV'
@@ -71,17 +103,16 @@ if width == 0 or height == 0 or n_frames == 0:
     print("Error: 无法读取视频信息")
     exit()
 
+# 计算全局温度范围
+global_min, global_max = compute_global_range(
+    video_path, loader, width, height, n_frames, sample_rate=10
+)
+
 fps = 25
 
 # 创建视频写入对象
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter('./Basic_IRV_Gray.mp4', fourcc, fps, (width, height), isColor=False)
-
-
-# ============================================
-# 第一步：计算变换矩阵（使用 8 位灰度图）
-# ============================================
-print("\n=== 第一步：计算帧间变换 ===")
 
 # 读取第一帧
 with open(video_path, "rb") as f:
@@ -91,12 +122,13 @@ if prev_u16 is None:
     print("Error: 无法读取第一帧")
     exit()
 
-prev_gray = u16_to_gray(prev_u16)
+# 使用全局归一化
+prev_gray = u16_to_gray_global(prev_u16, global_min, global_max)
 transforms = np.zeros((n_frames - 1, 3), np.float32)
 
 # 计算帧间变换
+print("\n正在计算帧间变换...")
 for i in range(n_frames - 2):
-    # 检测特征点
     orb = cv2.ORB_create()
     keypoints = orb.detect(prev_gray, None)
 
@@ -107,7 +139,6 @@ for i in range(n_frames - 2):
 
     prev_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32)
 
-    # 读取下一帧
     with open(video_path, "rb") as f:
         curr_u16 = loader.Open_Frame_IRV(f, i + 1, width, height)
 
@@ -115,17 +146,15 @@ for i in range(n_frames - 2):
         print(f"警告: 无法读取帧 {i + 1}")
         break
 
-    curr_gray = u16_to_gray(curr_u16)
+    # 使用全局归一化
+    curr_gray = u16_to_gray_global(curr_u16, global_min, global_max)
 
-    # 光流跟踪
     curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
 
-    # 筛选成功跟踪的点
     idx = np.where(status == 1)[0]
     prev_pts = prev_pts[idx]
     curr_pts = curr_pts[idx]
 
-    # 估计仿射变换
     if prev_pts.shape[0] < 4:
         m = np.eye(2, 3, dtype=np.float32)
     else:
@@ -134,7 +163,6 @@ for i in range(n_frames - 2):
     if m is None:
         m = np.eye(2, 3, dtype=np.float32)
 
-    # 提取变换参数
     dx = m[0, 2]
     dy = m[1, 2]
     da = np.arctan2(m[1, 0], m[0, 0])
@@ -145,27 +173,14 @@ for i in range(n_frames - 2):
     if (i + 1) % 10 == 0:
         print(f"进度: {i + 1}/{n_frames - 2} - 跟踪点数: {len(prev_pts)}")
 
-print("变换矩阵计算完成")
-
-# ============================================
-# 第二步：平滑轨迹
-# ============================================
-print("\n=== 第二步：平滑轨迹 ===")
-
+print("\n正在平滑轨迹...")
 trajectory = np.cumsum(transforms, axis=0)
 smoothed_trajectory = smooth_trajectory(trajectory)
 difference = smoothed_trajectory - trajectory
 transforms_smooth = transforms + difference
 
-print("轨迹平滑完成")
-
-# ============================================
-# 第三步：在 16 位数据上应用变换
-# ============================================
-print("\n=== 第三步：应用变换（16位精度）===")
-
+print("\n正在生成稳定视频...")
 for i in range(n_frames - 2):
-    # 读取 16 位原始帧
     with open(video_path, "rb") as f:
         frame_u16 = loader.Open_Frame_IRV(f, i, width, height)
 
@@ -173,12 +188,10 @@ for i in range(n_frames - 2):
         print(f"警告: 无法读取帧 {i}")
         break
 
-    # 获取平滑变换参数
     dx = transforms_smooth[i, 0]
     dy = transforms_smooth[i, 1]
     da = transforms_smooth[i, 2]
 
-    # 构造仿射变换矩阵
     m = np.zeros((2, 3), np.float32)
     m[0, 0] = np.cos(da)
     m[0, 1] = -np.sin(da)
@@ -191,20 +204,18 @@ for i in range(n_frames - 2):
         frame_u16,
         m,
         (width, height),
-        flags=cv2.INTER_LINEAR,  # 线性插值
-        borderMode=cv2.BORDER_REPLICATE  # 边界复制
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE
     )
 
-    # 修复边界
     frame_u16_stabilized = fix_border_u16(frame_u16_stabilized)
 
-    frame_gray = u16_to_gray(frame_u16_stabilized)
+    # 使用全局归一化
+    frame_gray = u16_to_gray_global(frame_u16_stabilized, global_min, global_max)
 
-    # 写入输出视频
     out.write(frame_gray)
 
     if (i + 1) % 10 == 0:
         print(f"写入进度: {i + 1}/{n_frames - 2}")
 
 out.release()
-print("\n✅ 视频稳像完成！输出文件: Basic_IRV_16bit.mp4")
