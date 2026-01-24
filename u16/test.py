@@ -5,7 +5,6 @@
 import numpy as np
 import cv2
 from keii_data_load import keii_data_load
-from ir_color import ppbyIron
 
 
 def moving_average(curve, radius):
@@ -48,25 +47,6 @@ def u16_to_gray(img_u16):
     return img_normalized
 
 
-def u16_to_bgr(img_u16, rgb_list):
-    """将 16 位图像转换为伪彩色 BGR 图像"""
-    img_normalized = u16_to_gray(img_u16)
-
-    h, w = img_normalized.shape
-    T = img_normalized.reshape(1, h * w)
-
-    R = rgb_list[T, 0].reshape(h, w)
-    G = rgb_list[T, 1].reshape(h, w)
-    B = rgb_list[T, 2].reshape(h, w)
-
-    img_bgr = np.zeros((h, w, 3), dtype=np.uint8)
-    img_bgr[:, :, 0] = B
-    img_bgr[:, :, 1] = G
-    img_bgr[:, :, 2] = R
-
-    return img_bgr
-
-
 # ============================================
 # 主程序
 # ============================================
@@ -76,7 +56,6 @@ video_path = r'./20230831171237_00.IRV'
 
 # 创建数据加载器
 loader = keii_data_load()
-rgb_list = ppbyIron
 
 # 读取视频信息
 print("正在读取视频信息...")
@@ -96,7 +75,8 @@ fps = 25
 
 # 创建视频写入对象
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter('./Basic_IRV_16bit.mp4', fourcc, fps, (width, height))
+out = cv2.VideoWriter('./Basic_IRV_Gray.mp4', fourcc, fps, (width, height), isColor=False)
+
 
 # ============================================
 # 第一步：计算变换矩阵（使用 8 位灰度图）
@@ -207,7 +187,6 @@ for i in range(n_frames - 2):
     m[0, 2] = dx
     m[1, 2] = dy
 
-    # ⭐ 关键：在 16 位数据上应用变换
     frame_u16_stabilized = cv2.warpAffine(
         frame_u16,
         m,
@@ -219,11 +198,10 @@ for i in range(n_frames - 2):
     # 修复边界
     frame_u16_stabilized = fix_border_u16(frame_u16_stabilized)
 
-    # ⭐ 最后才转换为伪彩色 BGR（用于保存视频）
-    frame_bgr = u16_to_bgr(frame_u16_stabilized, rgb_list)
+    frame_gray = u16_to_gray(frame_u16_stabilized)
 
     # 写入输出视频
-    out.write(frame_bgr)
+    out.write(frame_gray)
 
     if (i + 1) % 10 == 0:
         print(f"写入进度: {i + 1}/{n_frames - 2}")
