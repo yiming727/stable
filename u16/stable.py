@@ -1,10 +1,11 @@
 """
-光流法视频稳像 - 支持 IRV 红外视频格式（动态网格法增强版）
-网格大小根据视频分辨率自动调整
+光流法视频稳像 - 支持 IRV 红外视频格式（动态网格法 + 自动裁剪增强版）
+网格大小根据视频分辨率自动调整，自动计算最优裁剪区域
 """
 
 import numpy as np
 import cv2
+import math
 from keii_data_load import keii_data_load
 
 
@@ -27,14 +28,103 @@ def smooth_trajectory(trajectory, radius):
     return smoothed_trajectory
 
 
-def fix_border_u16(frame_u16):
-    """修复 16 位图像的边界（使用缩放）"""
-    s = frame_u16.shape
-    T = cv2.getRotationMatrix2D((s[1] / 2, s[0] / 2), 0, 1.1)
-    frame = cv2.warpAffine(frame_u16, T, (s[1], s[0]),
-                           flags=cv2.INTER_LINEAR,
-                           borderMode=cv2.BORDER_REPLICATE)
-    return frame
+def build_transformation_matrix(transform):
+    """
+    根据(dx, dy, da)构造仿射变换矩阵
+
+    参数:
+        transform: [dx, dy, da] 平移和旋转参数
+
+    返回:
+        transform_matrix: 2x3 仿射变换矩阵
+    """
+    transform_matrix = np.zeros((2, 3))
+    transform_matrix[0, 0] = np.cos(transform[2])
+    transform_matrix[0, 1] = -np.sin(transform[2])
+    transform_matrix[1, 0] = np.sin(transform[2])
+    transform_matrix[1, 1] = np.cos(transform[2])
+    transform_matrix[0, 2] = transform[0]
+    transform_matrix[1, 2] = transform[1]
+    return transform_matrix
+
+
+def extreme_corners(frame, transforms):
+    """
+    计算所有帧变换后的极值边界
+
+    参数:
+        frame: 当前视频帧
+        transforms: 全局变换矩阵 (n_frames, 3)
+
+    返回:
+        extreme_frame_corners: {'min_x', 'min_y', 'max_x', 'max_y'}
+    """
+    h, w = frame.shape[:2]
+    frame_corners = np.array([[0, 0], [0, h - 1], [w - 1, 0], [w - 1, h - 1]], dtype='float32')
+    frame_corners = np.array([frame_corners])
+
+    min_x = min_y = max_x = max_y = 0
+
+    for i in range(transforms.shape[0]):
+        transform = transforms[i, :]
+        transform_mat = build_transformation_matrix(transform)
+        transformed_frame_corners = cv2.transform(frame_corners, transform_mat)
+        delta_corners = transformed_frame_corners - frame_corners
+        delta_y_corners = delta_corners[0][:, 1].tolist()
+        delta_x_corners = delta_corners[0][:, 0].tolist()
+
+        min_x = min([min_x] + delta_x_corners)
+        min_y = min([min_y] + delta_y_corners)
+        max_x = max([max_x] + delta_x_corners)
+        max_y = max([max_y] + delta_y_corners)
+
+    return {'min_x': min_x, 'min_y': min_y, 'max_x': max_x, 'max_y': max_y}
+
+
+def min_auto_border_size(extreme_frame_corners):
+    """
+    计算最小安全边距
+
+    参数:
+        extreme_frame_corners: 全局极值字典 {'min_x', 'min_y', 'max_x', 'max_y'}
+
+    返回:
+        border_size: 最小安全边距（int）
+    """
+    abs_extreme_corners = [abs(x) for x in extreme_frame_corners.values()]
+    return math.ceil(max(abs_extreme_corners))
+
+
+def fix_border(frame, extreme_frame_corners, border_size):
+    """
+    修复由于变换导致的边界问题（自动缩放）
+
+    参数:
+        frame: 当前视频帧
+        extreme_frame_corners: 全局极值字典 {'min_x', 'min_y', 'max_x', 'max_y'}
+        border_size: 最小安全边距（int）
+
+    返回:
+        scaled_frame: 修复后的帧
+    """
+    if border_size == 0:
+        return frame
+
+    frame_h, frame_w = frame.shape[:2]
+
+    # 自动计算缩放比例
+    scale_w = frame_w / (frame_w - abs(extreme_frame_corners['min_x']) - abs(extreme_frame_corners['max_x']))
+    scale_h = frame_h / (frame_h - abs(extreme_frame_corners['min_y']) - abs(extreme_frame_corners['max_y']))
+    scale = max(scale_w, scale_h)
+
+    # warpAffine 以中心缩放
+    center = (frame_w / 2, frame_h / 2)
+    M = cv2.getRotationMatrix2D(center, 0, scale)
+    scaled_frame = cv2.warpAffine(frame, M, (frame_w, frame_h),
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_REPLICATE)
+
+    return scaled_frame
 
 
 def u16_to_gray_global(img_u16, global_min, global_max):
@@ -52,7 +142,6 @@ def u16_to_gray_global(img_u16, global_min, global_max):
 
 def compute_global_range(video_path, loader, width, height, n_frames, sample_rate=10):
     """计算视频的全局温度范围"""
-    print("正在计算全局温度范围...")
     global_min = np.inf
     global_max = -np.inf
 
@@ -66,10 +155,6 @@ def compute_global_range(video_path, loader, width, height, n_frames, sample_rat
             global_min = min(global_min, frame_u16.min())
             global_max = max(global_max, frame_u16.max())
 
-        if (i + 1) % 100 == 0:
-            print(f"  采样进度: {i + 1}/{n_frames}")
-
-    print(f"全局温度范围: {global_min} - {global_max}")
     return global_min, global_max
 
 
@@ -89,11 +174,9 @@ def calculate_optimal_grid_size(width, height, target_grid_size=100, min_grids=3
         grid_w: 每个网格的宽度
         grid_h: 每个网格的高度
     """
-    # 根据目标网格尺寸计算网格数量
     cols = max(min_grids, min(max_grids, width // target_grid_size))
     rows = max(min_grids, min(max_grids, height // target_grid_size))
 
-    # 计算实际的网格尺寸
     grid_w = width // cols
     grid_h = height // rows
 
@@ -118,28 +201,20 @@ def extract_grid_points(gray_image, grid_size, grid_w, grid_h):
 
     for y in range(grid_size[0]):
         for x in range(grid_size[1]):
-            # 计算当前网格的区域
             grid_y = y * grid_h
             grid_x = x * grid_w
 
-            # 确保不超出图像边界
             grid_y_end = min(grid_y + grid_h, h)
             grid_x_end = min(grid_x + grid_w, w)
 
-            # 提取网格区域
             grid_roi = gray_image[grid_y:grid_y_end, grid_x:grid_x_end]
 
-            # 检查网格区域是否有效
             if grid_roi.size == 0:
                 continue
 
-            # 使用 Harris 角点检测找到最显著的角点
             harris_response = cv2.cornerHarris(grid_roi, 2, 3, 0.04)
-
-            # 找到响应值最大的角点
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(harris_response)
 
-            # 将网格局部坐标转换为全局坐标
             global_x = grid_x + max_loc[0]
             global_y = grid_y + max_loc[1]
 
@@ -178,7 +253,7 @@ def extract_good_features(gray_image, max_corners=200, quality_level=0.01, min_d
 SMOOTHING_RADIUS = 50  # 平滑半径
 
 # 网格配置参数
-TARGET_GRID_SIZE = 100  # 目标网格尺寸（像素）- 每个网格的理想边长
+TARGET_GRID_SIZE = 100  # 目标网格尺寸（像素）
 MIN_GRIDS = 3  # 最小网格数（每个维度）
 MAX_GRIDS = 8  # 最大网格数（每个维度）
 
@@ -221,10 +296,6 @@ global_min, global_max = compute_global_range(
 
 fps = 25
 
-# 创建视频写入对象
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter('./Basic_IRV_11.mp4', fourcc, fps, (width, height), isColor=False)
-
 # 读取第一帧
 with open(video_path, "rb") as f:
     prev_u16 = loader.Open_Frame_IRV(f, 0, width, height)
@@ -238,9 +309,8 @@ prev_gray = u16_to_gray_global(prev_u16, global_min, global_max)
 transforms = np.zeros((n_frames - 1, 3), np.float32)
 
 # ==================== 计算帧间变换 ====================
-print(f"\n正在计算帧间变换（动态网格法 + 全局特征点）...")
 for i in range(n_frames - 2):
-    # 提取网格特征点（使用动态网格大小）
+    # 提取网格特征点
     grid_points = extract_grid_points(prev_gray, grid_size, grid_w, grid_h)
 
     # 提取全局优质特征点
@@ -262,14 +332,12 @@ for i in range(n_frames - 2):
     # 转换为 uint8
     curr_gray = u16_to_gray_global(curr_u16, global_min, global_max)
 
-    # 分别跟踪网格点和全局点
     # 网格点光流跟踪
     if len(grid_points) > 0:
         grid_prev_pts = grid_points.reshape(-1, 1, 2)
         grid_curr_pts, status_grid, err_grid = cv2.calcOpticalFlowPyrLK(
             prev_gray, curr_gray, grid_prev_pts, None
         )
-        # 筛选成功跟踪的网格点
         idx_grid = np.where(status_grid.flatten() == 1)[0]
         grid_prev_pts = grid_prev_pts[idx_grid]
         grid_curr_pts = grid_curr_pts[idx_grid]
@@ -283,7 +351,6 @@ for i in range(n_frames - 2):
         good_curr_pts, status_good, err_good = cv2.calcOpticalFlowPyrLK(
             prev_gray, curr_gray, good_prev_pts, None
         )
-        # 筛选成功跟踪的全局点
         idx_good = np.where(status_good.flatten() == 1)[0]
         good_prev_pts = good_prev_pts[idx_good]
         good_curr_pts = good_curr_pts[idx_good]
@@ -302,7 +369,6 @@ for i in range(n_frames - 2):
         prev_pts = good_prev_pts
         curr_pts = good_curr_pts
     else:
-        # 没有跟踪到任何点，使用单位矩阵
         transforms[i] = [0, 0, 0]
         prev_gray = curr_gray
         print(f"警告: 帧 {i} 未跟踪到任何特征点")
@@ -325,19 +391,30 @@ for i in range(n_frames - 2):
     transforms[i] = [dx, dy, da]
     prev_gray = curr_gray
 
-    if (i + 1) % 10 == 0:
-        print(f"进度: {i + 1}/{n_frames - 2} - 网格点: {len(grid_prev_pts)}, "
-              f"全局点: {len(good_prev_pts)}, 总计: {len(prev_pts)}")
-
 # ==================== 平滑轨迹 ====================
-print("\n正在平滑轨迹...")
 trajectory = np.cumsum(transforms, axis=0)
 smoothed_trajectory = smooth_trajectory(trajectory, radius=SMOOTHING_RADIUS)
 difference = smoothed_trajectory - trajectory
 transforms_smooth = transforms + difference
 
+# ==================== 计算自动裁剪参数 ====================
+# 使用第一帧计算极值边界
+with open(video_path, "rb") as f:
+    first_frame = loader.Open_Frame_IRV(f, 0, width, height)
+
+extreme_frame_corners = extreme_corners(first_frame, transforms_smooth)
+border_size = min_auto_border_size(extreme_frame_corners)
+
+# 计算缩放比例
+scale_w = width / (width - abs(extreme_frame_corners['min_x']) - abs(extreme_frame_corners['max_x']))
+scale_h = height / (height - abs(extreme_frame_corners['min_y']) - abs(extreme_frame_corners['max_y']))
+scale = max(scale_w, scale_h)
+
+# 创建视频写入对象
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+out = cv2.VideoWriter('./Basic_IRV_AutoCrop.mp4', fourcc, fps, (width, height), isColor=False)
+
 # ==================== 生成稳定视频 ====================
-print("\n正在生成稳定视频...")
 for i in range(n_frames - 2):
     # 读取 16 位原始帧
     with open(video_path, "rb") as f:
@@ -370,8 +447,8 @@ for i in range(n_frames - 2):
         borderMode=cv2.BORDER_REPLICATE
     )
 
-    # 修复边界
-    frame_u16_stabilized = fix_border_u16(frame_u16_stabilized)
+    # 使用自动裁剪修复边界
+    frame_u16_stabilized = fix_border(frame_u16_stabilized, extreme_frame_corners, border_size)
 
     # 输出时使用全局归一化
     frame_gray = u16_to_gray_global(frame_u16_stabilized, global_min, global_max)
@@ -379,7 +456,7 @@ for i in range(n_frames - 2):
     # 写入输出视频
     out.write(frame_gray)
 
-    if (i + 1) % 10 == 0:
-        print(f"写入进度: {i + 1}/{n_frames - 2}")
-
 out.release()
+print("\n 处理完成！")
+print(f"输出视频: Basic_IRV_AutoCrop.mp4")
+print(f"有效内容区域: {width}x{height} (缩放比例: {scale:.4f})")
