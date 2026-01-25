@@ -1,6 +1,6 @@
 """
-光流法视频稳像 - 支持 IRV 红外视频格式（网格法增强版）
-结合网格特征点 + 全局特征点，提高稳像鲁棒性
+光流法视频稳像 - 支持 IRV 红外视频格式（动态网格法增强版）
+网格大小根据视频分辨率自动调整
 """
 
 import numpy as np
@@ -22,7 +22,6 @@ def smooth_trajectory(trajectory, radius):
     """平滑轨迹（支持多次平滑）"""
     smoothed_trajectory = np.copy(trajectory)
     for i in range(3):
-        # 多次平滑，提高平滑效果
         smoothed_trajectory[:, i] = moving_average(trajectory[:, i], radius=radius)
         smoothed_trajectory[:, i] = moving_average(smoothed_trajectory[:, i], radius=radius)
     return smoothed_trajectory
@@ -39,9 +38,7 @@ def fix_border_u16(frame_u16):
 
 
 def u16_to_gray_global(img_u16, global_min, global_max):
-    """
-    使用全局 min/max 转换为 8 位灰度图 - 避免闪烁
-    """
+    """使用全局 min/max 转换为 8 位灰度图 - 避免闪烁"""
     if global_max > global_min:
         img_normalized = np.clip(
             (img_u16 - global_min) / (global_max - global_min) * 255,
@@ -76,21 +73,47 @@ def compute_global_range(video_path, loader, width, height, n_frames, sample_rat
     return global_min, global_max
 
 
-def extract_grid_points(gray_image, grid_size=(4, 4)):
+def calculate_optimal_grid_size(width, height, target_grid_size=100, min_grids=3, max_grids=8):
+    """
+    根据视频分辨率动态计算最优网格大小
+
+    参数:
+        width: 视频宽度
+        height: 视频高度
+        target_grid_size: 目标网格尺寸（像素），每个网格的理想边长
+        min_grids: 最小网格数（每个维度）
+        max_grids: 最大网格数（每个维度）
+
+    返回:
+        grid_size: (rows, cols) 网格大小
+        grid_w: 每个网格的宽度
+        grid_h: 每个网格的高度
+    """
+    # 根据目标网格尺寸计算网格数量
+    cols = max(min_grids, min(max_grids, width // target_grid_size))
+    rows = max(min_grids, min(max_grids, height // target_grid_size))
+
+    # 计算实际的网格尺寸
+    grid_w = width // cols
+    grid_h = height // rows
+
+    return (rows, cols), grid_w, grid_h
+
+
+def extract_grid_points(gray_image, grid_size, grid_w, grid_h):
     """
     在图像上均匀分布网格，提取每个网格的最佳特征点
 
     参数:
         gray_image: 灰度图像
         grid_size: 网格大小 (rows, cols)
+        grid_w: 每个网格的宽度
+        grid_h: 每个网格的高度
 
     返回:
         grid_points: 网格特征点列表
     """
     h, w = gray_image.shape
-    grid_h = h // grid_size[0]
-    grid_w = w // grid_size[1]
-
     grid_points = []
 
     for y in range(grid_size[0]):
@@ -105,6 +128,10 @@ def extract_grid_points(gray_image, grid_size=(4, 4)):
 
             # 提取网格区域
             grid_roi = gray_image[grid_y:grid_y_end, grid_x:grid_x_end]
+
+            # 检查网格区域是否有效
+            if grid_roi.size == 0:
+                continue
 
             # 使用 Harris 角点检测找到最显著的角点
             harris_response = cv2.cornerHarris(grid_roi, 2, 3, 0.04)
@@ -147,10 +174,15 @@ def extract_good_features(gray_image, max_corners=200, quality_level=0.01, min_d
     else:
         return np.array([], dtype=np.float32).reshape(0, 2)
 
-
 # ==================== 配置参数 ====================
 SMOOTHING_RADIUS = 50  # 平滑半径
-GRID_SIZE = (4, 4)  # 网格大小（4x4）
+
+# 网格配置参数
+TARGET_GRID_SIZE = 100  # 目标网格尺寸（像素）- 每个网格的理想边长
+MIN_GRIDS = 3  # 最小网格数（每个维度）
+MAX_GRIDS = 8  # 最大网格数（每个维度）
+
+# 全局特征点参数
 MAX_CORNERS = 200  # 全局特征点最大数量
 QUALITY_LEVEL = 0.01  # 特征点质量水平
 MIN_DISTANCE = 30  # 特征点最小距离
@@ -174,6 +206,14 @@ if width == 0 or height == 0 or n_frames == 0:
     print("Error: 无法读取视频信息")
     exit()
 
+# 动态计算最优网格大小
+grid_size, grid_w, grid_h = calculate_optimal_grid_size(
+    width, height,
+    target_grid_size=TARGET_GRID_SIZE,
+    min_grids=MIN_GRIDS,
+    max_grids=MAX_GRIDS
+)
+
 # 计算全局温度范围
 global_min, global_max = compute_global_range(
     video_path, loader, width, height, n_frames, sample_rate=10
@@ -183,15 +223,7 @@ fps = 25
 
 # 创建视频写入对象
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter('./Basic_IRV_Gray_Grid.mp4', fourcc, fps, (width, height), isColor=False)
-
-if not out.isOpened():
-    print("警告: 视频写入器打开失败，尝试使用其他编码器...")
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter('./Basic_IRV_Gray_Grid.avi', fourcc, fps, (width, height), isColor=False)
-    if not out.isOpened():
-        print("Error: 无法创建视频写入器")
-        exit()
+out = cv2.VideoWriter('./Basic_IRV_11.mp4', fourcc, fps, (width, height), isColor=False)
 
 # 读取第一帧
 with open(video_path, "rb") as f:
@@ -206,12 +238,12 @@ prev_gray = u16_to_gray_global(prev_u16, global_min, global_max)
 transforms = np.zeros((n_frames - 1, 3), np.float32)
 
 # ==================== 计算帧间变换 ====================
-print("\n正在计算帧间变换（网格法 + 全局特征点）...")
+print(f"\n正在计算帧间变换（动态网格法 + 全局特征点）...")
 for i in range(n_frames - 2):
-    # 1. 提取网格特征点
-    grid_points = extract_grid_points(prev_gray, grid_size=GRID_SIZE)
+    # 提取网格特征点（使用动态网格大小）
+    grid_points = extract_grid_points(prev_gray, grid_size, grid_w, grid_h)
 
-    # 2. 提取全局优质特征点
+    # 提取全局优质特征点
     good_points = extract_good_features(
         prev_gray,
         max_corners=MAX_CORNERS,
@@ -294,8 +326,8 @@ for i in range(n_frames - 2):
     prev_gray = curr_gray
 
     if (i + 1) % 10 == 0:
-        print(
-            f"进度: {i + 1}/{n_frames - 2} - 网格点: {len(grid_prev_pts)}, 全局点: {len(good_prev_pts)}, 总计: {len(prev_pts)}")
+        print(f"进度: {i + 1}/{n_frames - 2} - 网格点: {len(grid_prev_pts)}, "
+              f"全局点: {len(good_prev_pts)}, 总计: {len(prev_pts)}")
 
 # ==================== 平滑轨迹 ====================
 print("\n正在平滑轨迹...")
@@ -351,4 +383,3 @@ for i in range(n_frames - 2):
         print(f"写入进度: {i + 1}/{n_frames - 2}")
 
 out.release()
-print("\n✅ 处理完成！")
