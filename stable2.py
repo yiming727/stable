@@ -1,107 +1,96 @@
+"""
+IIR滤波
+"""
+
 import cv2
 import numpy as np
 from collections import deque
 import matplotlib.pyplot as plt
 import time
-from scipy.signal import savgol_filter
 
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-"""
-Savitzky-Golay 滤波
-"""
-class SavitzkyGolayFilter:
-    def __init__(self, window_size=5, poly_order=2):
-        self.window_size = window_size
-        self.poly_order = poly_order
-        self.dx_history = []
-        self.dy_history = []
-        self.da_history = []
+class IIRFilter:
+    def __init__(self, alpha=0.1):
+        # 平滑因子，控制平滑度，alpha 越小，平滑效果越强
+        self.alpha = alpha
+        # 初始化平移和旋转的状态
+        self.dx = 0.0
+        self.dy = 0.0
+        self.da = 0.0
 
     def update(self, dx, dy, da):
-        self.dx_history.append(dx)
-        self.dy_history.append(dy)
-        self.da_history.append(da)
+        # 应用一阶IIR滤波器
+        self.dx = self.alpha * dx + (1 - self.alpha) * self.dx
+        self.dy = self.alpha * dy + (1 - self.alpha) * self.dy
+        self.da = self.alpha * da + (1 - self.alpha) * self.da
+        return self.dx, self.dy, self.da
 
-        # 确保历史数据至少有 window_size 个元素
-        if len(self.dx_history) > self.window_size:
-            self.dx_history.pop(0)
-            self.dy_history.pop(0)
-            self.da_history.pop(0)
-
-        if len(self.dx_history) >= self.window_size:
-            smoothed_dx = savgol_filter(self.dx_history, self.window_size, self.poly_order, mode='nearest')[-1]
-            smoothed_dy = savgol_filter(self.dy_history, self.window_size, self.poly_order, mode='nearest')[-1]
-            smoothed_da = savgol_filter(self.da_history, self.window_size, self.poly_order, mode='nearest')[-1]
-        else:
-            smoothed_dx, smoothed_dy, smoothed_da = dx, dy, da
-
-        return smoothed_dx, smoothed_dy, smoothed_da
 
 # 定义一个函数，用于修复由于变换导致的边界问题
-# def fix_border(frame):
-#     s = frame.shape  # 获取帧的尺寸
-#     T = cv2.getRotationMatrix2D((s[1] / 2, s[0] / 2), 0, 1.04)  # 创建一个旋转矩阵
-#     frame = cv2.warpAffine(frame, T, (s[1], s[0]))  # 应用旋转和缩放
-#     return frame
+def fix_border(frame):
+    s = frame.shape  # 获取帧的尺寸
+    T = cv2.getRotationMatrix2D((s[1] / 2, s[0] / 2), 0, 1.04)  # 创建一个旋转矩阵
+    frame = cv2.warpAffine(frame, T, (s[1], s[0]))  # 应用旋转和缩放
+    return frame
 
 # 替代原有的 fix_border 函数：修复变换后的边界
-def fix_border(frame, transform):
-    """自动裁剪由于稳定化变换而引起的边界问题
-
-    :param frame: 当前视频帧
-    :param transforms: 应用的变换历史记录（变换参数列表）
-    :return: 自动裁剪后的帧
-    """
-    # 获取帧的尺寸
-    h, w = frame.shape[:2]
-
-    # 定义初始帧的四个角点
-    frame_corners = np.array([[0, 0],  # top left
-                              [0, h - 1],  # bottom left
-                              [w - 1, 0],  # top right
-                              [w - 1, h - 1]],  # bottom right
-                             dtype='float32')
-
-    # 计算因稳定化变换导致的极值点
-    min_x = min_y = max_x = max_y = 0
-
-    # 遍历所有变换，应用到四个角点
-    # for enhancedEdition in transforms:
-    transform_mat = build_transformation_matrix(transform)  # 假设这是构造变换矩阵的函数
-    transformed_corners = cv2.transform(np.array([frame_corners]), transform_mat)
-
-    # 计算每个角点的位移
-    delta_corners = transformed_corners - frame_corners
-
-    # 获取位移的 x 和 y 值
-    delta_x_corners = delta_corners[:, 0]
-    delta_y_corners = delta_corners[:, 1]
-
-    # 更新极值点
-    min_x = min(min_x, np.min(delta_x_corners))
-    min_y = min(min_y, np.min(delta_y_corners))
-    max_x = max(max_x, np.max(delta_x_corners))
-    max_y = max(max_y, np.max(delta_y_corners))
-
-    # 计算裁剪区域的边界
-    min_x = int(np.floor(min_x))
-    min_y = int(np.floor(min_y))
-    max_x = int(np.ceil(max_x))
-    max_y = int(np.ceil(max_y))
-
-    # 确保裁剪区域在帧尺寸内
-    min_x = max(min_x, 0)
-    min_y = max(min_y, 0)
-    max_x = min(max_x, w)
-    max_y = min(max_y, h)
-
-    # 裁剪掉边界的黑色区域
-    # cropped_frame = frame[min_y:h - max_y, min_x:w - max_x]
-    cropped_frame = frame[max_x:w - max_x, max_y:h - max_y]
-
-    return cropped_frame
+# def fix_border(frame, enhancedEdition):
+#     """自动裁剪由于稳定化变换而引起的边界问题
+#
+#     :param frame: 当前视频帧
+#     :param transforms: 应用的变换历史记录（变换参数列表）
+#     :return: 自动裁剪后的帧
+#     """
+#     # 获取帧的尺寸
+#     h, w = frame.shape[:2]
+#
+#     # 定义初始帧的四个角点
+#     frame_corners = np.array([[0, 0],  # top left
+#                               [0, h - 1],  # bottom left
+#                               [w - 1, 0],  # top right
+#                               [w - 1, h - 1]],  # bottom right
+#                              dtype='float32')
+#
+#     # 计算因稳定化变换导致的极值点
+#     min_x = min_y = max_x = max_y = 0
+#
+#     # 遍历所有变换，应用到四个角点
+#     # for enhancedEdition in transforms:
+#     transform_mat = build_transformation_matrix(enhancedEdition)  # 假设这是构造变换矩阵的函数
+#     transformed_corners = cv2.enhancedEdition(np.array([frame_corners]), transform_mat)
+#
+#     # 计算每个角点的位移
+#     delta_corners = transformed_corners - frame_corners
+#
+#     # 获取位移的 x 和 y 值
+#     delta_x_corners = delta_corners[:, 0]
+#     delta_y_corners = delta_corners[:, 1]
+#
+#     # 更新极值点
+#     min_x = min(min_x, np.min(delta_x_corners))
+#     min_y = min(min_y, np.min(delta_y_corners))
+#     max_x = max(max_x, np.max(delta_x_corners))
+#     max_y = max(max_y, np.max(delta_y_corners))
+#
+#     # 计算裁剪区域的边界
+#     min_x = int(np.floor(min_x))
+#     min_y = int(np.floor(min_y))
+#     max_x = int(np.ceil(max_x))
+#     max_y = int(np.ceil(max_y))
+#
+#     # 确保裁剪区域在帧尺寸内
+#     min_x = max(min_x, 0)
+#     min_y = max(min_y, 0)
+#     max_x = min(max_x, w)
+#     max_y = min(max_y, h)
+#
+#     # 裁剪掉边界的黑色区域
+#     # cropped_frame = frame[min_y:h - max_y, min_x:w - max_x]
+#     cropped_frame = frame[max_x:w - max_x, max_y:h - max_y]
+#
+#     return cropped_frame
 
 
 def build_transformation_matrix(transform):
@@ -189,7 +178,7 @@ if prev is None:
     cap.release()
     exit()
 # IIR滤波
-sg_filter = SavitzkyGolayFilter(window_size=50, poly_order=10)
+iir_filter = IIRFilter(alpha=0.2)
 # 将第一帧转换为灰度图
 prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
 # 创建队列
@@ -220,7 +209,12 @@ while True:
     #     continue  # 跳过帧
 
     curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
-    prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=100, qualityLevel=0.01, minDistance=30, blockSize=3)
+    # # Shi-Tomasi特征点检测
+    # prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3)
+    #FAST特征点检测
+    fast = cv2.FastFeatureDetector_create()
+    keypoints = fast.detect(prev_gray, None)
+    prev_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32)
     curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
 
     # 筛选出成功跟踪的点
@@ -251,7 +245,7 @@ while True:
     cumulative_dy += dy
     cumulative_da += da
 
-    smooth_cumulative_dx, smooth_cumulative_dy, smooth_cumulative_da = sg_filter.update(cumulative_dx, cumulative_dy, cumulative_da)
+    smooth_cumulative_dx, smooth_cumulative_dy, smooth_cumulative_da = iir_filter.update(cumulative_dx, cumulative_dy, cumulative_da)
 
     # 记录数据（用于后续画图）
     original_dx.append(cumulative_dx)
@@ -284,19 +278,17 @@ while True:
     m_smooth[1, 2] = corrected_dy
 
     # 应用变换到当前帧
-    # w = curr_small.shape[1]
-    # h = curr_small.shape[0]
     frame_stabilized = cv2.warpAffine(curr, m_smooth, (w, h))
     # out.write(frame_stabilized)
 
     # 修复变换后的边界问题
-    frame_stabilized = fix_border(frame_stabilized, transform)
-    # frame_stabilized = fix_border(frame_stabilized)
+    # frame_stabilized = fix_border(frame_stabilized, enhancedEdition)
+    frame_stabilized = fix_border(frame_stabilized)
 
-    # # 确保两张图像大小一致
-    frame_stabilized_resized = cv2.resize(frame_stabilized, (curr.shape[1], curr.shape[0]))
+    # 确保两张图像大小一致
+    # frame_stabilized_resized = cv2.resize(frame_stabilized, (curr.shape[1], curr.shape[0]))
     # 将原始帧和平滑帧并排放置
-    frame_out = cv2.hconcat([curr, frame_stabilized_resized])
+    frame_out = cv2.hconcat([curr, frame_stabilized])
 
     """
     采用队列

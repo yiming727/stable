@@ -1,43 +1,155 @@
+"""
+卡尔曼滤波
+"""
+
 import cv2
 import numpy as np
 from collections import deque
 import matplotlib.pyplot as plt
 import time
-from scipy.optimize import minimize
 
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-"""
-L1/L2优化
-"""
-class TrajectoryOptimizer:
-    def __init__(self, lambda_smooth=100, lambda_accel=1):
-        self.lambda_smooth = lambda_smooth  # 控制平滑度的权重
-        self.lambda_accel = lambda_accel  # 控制加速度约束的权重
-        self.transforms = []  # 存储变换参数
+# class KalmanFilter:
+#     def __init__(self, dt=1.0):
+#         # 状态向量: [dx, dy, da, vx, vy, va]，其中 dx, dy, da 分别为平移和旋转；vx, vy, va 为速度项
+#         self.state = np.zeros((6, 1), dtype=np.float32)
+#         self.dt = dt
+#
+#         # 状态转移矩阵
+#         self.A = np.array([
+#             [1, 0, 0, dt, 0,  0],
+#             [0, 1, 0, 0,  dt, 0],
+#             [0, 0, 1, 0,  0,  dt],
+#             [0, 0, 0, 1,  0,  0],
+#             [0, 0, 0, 0,  1,  0],
+#             [0, 0, 0, 0,  0,  1]
+#         ], dtype=np.float32)
+#
+#         # 观测矩阵
+#         self.H = np.array([
+#             [1, 0, 0, 0, 0, 0],
+#             [0, 1, 0, 0, 0, 0],
+#             [0, 0, 1, 0, 0, 0]
+#         ], dtype=np.float32)
+#
+#         # 过程噪声协方差
+#         self.Q = np.eye(6, dtype=np.float32) * 0.01
+#
+#         # 观测噪声协方差
+#         self.R = np.eye(3, dtype=np.float32) * 0.1
+#
+#         # 误差协方差矩阵
+#         self.P = np.eye(6, dtype=np.float32)
+#
+#     def predict(self):
+#         # 状态预测
+#         self.state = np.dot(self.A, self.state)
+#         # 误差协方差预测
+#         self.P = np.dot(np.dot(self.A, self.P), self.A.T) + self.Q
+#         return self.state.copy()
+#
+#     def update(self, z):
+#         # 将测量向量转换为 (3,1) 形状
+#         z = z.reshape((3, 1))
+#         # 计算卡尔曼增益
+#         S = np.dot(np.dot(self.H, self.P), self.H.T) + self.R
+#         K = np.dot(np.dot(self.P, self.H.T), np.linalg.inv(S))
+#
+#         # 更新状态
+#         y = z - np.dot(self.H, self.state)
+#         self.state += np.dot(K, y)
+#
+#         # 动态调整 IIR 平滑系数
+#         residual_norm = np.linalg.norm(y)
+#         alpha = 0.2 if residual_norm < 1.0 else 0.5  # 根据残差调整平滑系数
+#
+#         # IIR 平滑
+#         self.state[0] = alpha * self.state[0] + (1 - alpha) * self.state[0]
+#         self.state[1] = alpha * self.state[1] + (1 - alpha) * self.state[1]
+#         self.state[2] = alpha * self.state[2] + (1 - alpha) * self.state[2]
+#
+#         # 更新误差协方差
+#         I = np.eye(self.P.shape[0], dtype=np.float32)
+#         self.P = np.dot(I - np.dot(K, self.H), self.P)
+#         return self.state.copy()
 
-    def update(self, dx, dy, da):
-        self.transforms.append([dx, dy, da])
-        return self.optimize()
+class KalmanFilter:
+    def __init__(self, dt=1.0):
+        # 状态向量: [dx, dy, da, vx, vy, va, ax, ay, aa]，增加加速度项
+        self.state = np.zeros((9, 1), dtype=np.float32)
+        self.dt = dt
 
-    def optimize(self):
-        if len(self.transforms) < 3:
-            return self.transforms[-1]  # 直接返回最新变换
+        # 状态转移矩阵，加入加速度预测
+        self.A = np.array([
+            [1, 0, 0, dt, 0,  0, 0.5 * dt**2, 0, 0],
+            [0, 1, 0, 0,  dt, 0, 0, 0.5 * dt**2, 0],
+            [0, 0, 1, 0,  0,  dt, 0, 0, 0.5 * dt**2],
+            [0, 0, 0, 1,  0,  0, dt, 0, 0],
+            [0, 0, 0, 0,  1,  0, 0, dt, 0],
+            [0, 0, 0, 0,  0,  1, 0, 0, dt],
+            [0, 0, 0, 0,  0,  0, 1, 0, 0],
+            [0, 0, 0, 0,  0,  0, 0, 1, 0],
+            [0, 0, 0, 0,  0,  0, 0, 0, 1]
+        ], dtype=np.float32)
 
-        transforms = np.array(self.transforms)
-        n = len(transforms)
+        # 观测矩阵
+        self.H = np.array([
+            [1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0, 0, 0]
+        ], dtype=np.float32)
 
-        def energy_function(x):
-            x = x.reshape(n, 3)
-            smooth_term = np.sum((x[1:] - x[:-1]) ** 2)
-            accel_term = np.sum((x[2:] - 2 * x[1:-1] + x[:-2]) ** 2)
-            return self.lambda_smooth * smooth_term + self.lambda_accel * accel_term
+        # 过程噪声协方差（降低 Q 增强平滑）
+        self.Q = np.eye(9, dtype=np.float32) * 0.001
 
-        x0 = transforms.flatten()
-        result = minimize(energy_function, x0, method='L-BFGS-B')
-        optimized_transforms = result.x.reshape(n, 3)
-        return optimized_transforms[-1]
+        # 观测噪声协方差（提高 R 增强平滑）
+        self.R = np.eye(3, dtype=np.float32) * 1.0
+
+        # 误差协方差矩阵
+        self.P = np.eye(9, dtype=np.float32)
+
+    def predict(self):
+        # 预测下一状态
+        self.state = np.dot(self.A, self.state)
+        # 误差协方差预测
+        self.P = np.dot(np.dot(self.A, self.P), self.A.T) + self.Q
+        return self.state.copy()
+
+    def update(self, z):
+        # 观测更新
+        z = z.reshape((3, 1))
+        S = np.dot(np.dot(self.H, self.P), self.H.T) + self.R
+        K = np.dot(np.dot(self.P, self.H.T), np.linalg.inv(S))
+
+        # 更新状态
+        y = z - np.dot(self.H, self.state)
+        self.state += np.dot(K, y)
+
+        # IIR 平滑
+        alpha = 0.2  # 平滑系数
+        self.state[0] = alpha * self.state[0] + (1 - alpha) * self.state[0]
+        self.state[1] = alpha * self.state[1] + (1 - alpha) * self.state[1]
+        self.state[2] = alpha * self.state[2] + (1 - alpha) * self.state[2]
+
+        # 更新误差协方差
+        I = np.eye(self.P.shape[0], dtype=np.float32)
+        self.P = np.dot(I - np.dot(K, self.H), self.P)
+        return self.state.copy()
+
+# class LowPassFilter:
+#     def __init__(self, alpha):
+#         self.alpha = alpha
+#         self.filtered_value = None
+#
+#     def update(self, value):
+#         if self.filtered_value is None:
+#             self.filtered_value = value
+#         else:
+#             self.filtered_value = self.alpha * value + (1 - self.alpha) * self.filtered_value
+#         return self.filtered_value
+
 # 定义一个函数，用于修复由于变换导致的边界问题
 # def fix_border(frame):
 #     s = frame.shape  # 获取帧的尺寸
@@ -97,8 +209,8 @@ def fix_border(frame, transform):
     max_y = min(max_y, h)
 
     # 裁剪掉边界的黑色区域
-    # cropped_frame = frame[min_y:h - max_y, min_x:w - max_x]
-    cropped_frame = frame[max_x:w - max_x, max_y:h - max_y]
+    cropped_frame = frame[min_y:h - max_y, min_x:w - max_x]
+    # cropped_frame = frame[max_x:w - max_x, max_y:h - max_y]
 
     return cropped_frame
 
@@ -170,14 +282,22 @@ class FrameQueue:
 SMOOTHING_RADIUS = 50
 # 打开摄像头（或者在线视频流）
 cap = cv2.VideoCapture(0)  # 使用默认摄像头，或者替换为在线视频流 URL
-# cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-# cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 # frame_skip = 3  # 处理 1 帧，跳过 2 帧
 # frame_count = 0
 # 检查视频是否成功打开
 if not cap.isOpened():
     print("Error opening video")
     exit()
+# 获取帧率，用于确定 dt
+fps = cap.get(cv2.CAP_PROP_FPS)
+if fps <= 0:
+    fps = 30  # 默认帧率
+dt = 1.0 / fps
+# 初始化卡尔曼滤波器
+kf = KalmanFilter(dt=dt)
+# low_pass_filter = LowPassFilter(alpha=0.2)
 # 获取视频的总帧数、宽、高和帧率
 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -187,8 +307,6 @@ if prev is None:
     print("Error reading video file")
     cap.release()
     exit()
-# IIR滤波
-optimizer = TrajectoryOptimizer(lambda_smooth=100, lambda_accel=1)
 # 将第一帧转换为灰度图
 prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
 # 创建队列
@@ -196,6 +314,9 @@ frame_queue = FrameQueue(max_len=25)
 time.sleep(1)
 # 卡尔曼滤波时定义累计变换参数，初始为零
 cumulative_dx = cumulative_dy = cumulative_da = 0.0
+"""
+测试
+"""
 # 用于存储每帧滤波前和滤波后的累计变换数据（便于后续画图）
 original_dx = []
 original_dy = []
@@ -203,9 +324,19 @@ original_da = []
 smoothed_dx = []
 smoothed_dy = []
 smoothed_da = []
-# 初始化视频写入器
-fourcc = cv2.VideoWriter_fourcc(*'XVID')  # 选择 XVID 编码格式（.avi）
-out = cv2.VideoWriter('stabilized_output.avi', fourcc, 30, (w, h))  # 帧率设为 10，分辨率设为 (w, h)
+# # 初始化视频写入器
+# fourcc = cv2.VideoWriter_fourcc(*'XVID')  # 选择 XVID 编码格式（.avi）
+# out = cv2.VideoWriter('stabilized_output.avi', fourcc, 30, (w, h))  # 帧率设为 10，分辨率设为 (w, h)
+# # 视频参数设置
+# output_filename_original = "original_output.mp4"
+# output_filename_stabilized = "stabilized_output.mp4"
+# frame_size1 = None  # 在第一帧时确定
+# frame_size2 = None
+# fps = 30  # 假设视频帧率为30
+# codec = cv2.VideoWriter_fourcc(*"mp4v")  # 选择MP4编码格式
+# # VideoWriter 初始化（延迟到第一帧确定大小）
+# video_writer_original = None
+# video_writer_stabilized = None
 
 
 # 主循环，处理视频流
@@ -219,7 +350,16 @@ while True:
     #     continue  # 跳过帧
 
     curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
-    prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=100, qualityLevel=0.01, minDistance=30, blockSize=3)
+    # # Shi-Tomasi特征点检测
+    # prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3)
+    # #FAST特征点检测
+    # fast = cv2.FastFeatureDetector_create()
+    # keypoints = fast.detect(prev_gray, None)
+    # prev_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32)
+    # ORB 特征点检测
+    orb = cv2.ORB_create(nfeatures=100)  # 增加特征点数量
+    keypoints = orb.detect(prev_gray, None)
+    prev_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32)
     curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None)
 
     # 筛选出成功跟踪的点
@@ -231,8 +371,9 @@ while True:
     if prev_pts.shape[0] < 4:
         m = np.eye(2, 3, dtype=np.float32)
     else:
-        m, _ = cv2.estimateAffinePartial2D(prev_pts, curr_pts)  # 估计仿射变换矩阵
-        # m, mask = cv2.findHomography(prev_pts, curr_pts, cv2.RANSAC, 5.0)
+        # m, _ = cv2.estimateAffinePartial2D(prev_pts, curr_pts)  # 估计仿射变换矩阵
+        m, mask = cv2.findHomography(prev_pts, curr_pts, cv2.RANSAC, 5.0)
+        # m = cv2.estimateRigidTransform(prev_pts, curr_pts, fullAffine=False)
 
     if m is None:
         m = np.eye(2, 3, dtype=np.float32)
@@ -242,15 +383,42 @@ while True:
     dy = m[1, 2]
     da = np.arctan2(m[1, 0], m[0, 0])
 
+    # # 如果跟踪的点太少，则使用单位矩阵
+    # if prev_pts.shape[0] < 4:
+    #     m = np.eye(3, 3, dtype=np.float32)  # 使用3x3单位矩阵
+    # else:
+    #     # 使用 cv2.findHomography 计算投射变换矩阵（3x3矩阵）
+    #     m, mask = cv2.findHomography(prev_pts, curr_pts, cv2.RANSAC, 5.0)
+    #
+    # # 如果变换矩阵是空的，则使用单位矩阵
+    # if m is None:
+    #     m = np.eye(3, 3, dtype=np.float32)
+    #
+    # # 提取变换参数（平移和旋转部分）
+    # dx = m[0, 2]
+    # dy = m[1, 2]
+    # # 透视修正可以通过更复杂的方式获得，如通过卡尔曼滤波计算累计修正值
+    # da = np.arctan2(m[1, 0], m[0, 0])  # 如果需要旋转角度的话
+
     """
-    IIR滤波
+    卡尔曼滤波
     """
     # # 累加当前帧的变换，得到历来的累计运动
     cumulative_dx += dx
     cumulative_dy += dy
     cumulative_da += da
 
-    smooth_cumulative_dx, smooth_cumulative_dy, smooth_cumulative_da = optimizer.update(cumulative_dx, cumulative_dy, cumulative_da)
+    # 构造累计变换的测量向量，传入卡尔曼滤波器
+    measurement = np.array([cumulative_dx, cumulative_dy, cumulative_da], dtype=np.float32)
+
+    # 卡尔曼滤波：先预测，再更新，得到平滑后的累计变换
+    kf.predict()
+    smoothed_state = kf.update(measurement)
+    # # 低通滤波
+    # smoothed_state = low_pass_filter.update(smoothed_state)
+    smooth_cumulative_dx = smoothed_state[0, 0]
+    smooth_cumulative_dy = smoothed_state[1, 0]
+    smooth_cumulative_da = smoothed_state[2, 0]
 
     # 记录数据（用于后续画图）
     original_dx.append(cumulative_dx)
@@ -283,19 +451,31 @@ while True:
     m_smooth[1, 2] = corrected_dy
 
     # 应用变换到当前帧
-    # w = curr_small.shape[1]
-    # h = curr_small.shape[0]
     frame_stabilized = cv2.warpAffine(curr, m_smooth, (w, h))
+    # frame_stabilized = cv2.warpPerspective(curr, m_smooth, (w, h))
     # out.write(frame_stabilized)
 
     # 修复变换后的边界问题
     frame_stabilized = fix_border(frame_stabilized, transform)
     # frame_stabilized = fix_border(frame_stabilized)
 
-    # # 确保两张图像大小一致
+    # 确保两张图像大小一致
     frame_stabilized_resized = cv2.resize(frame_stabilized, (curr.shape[1], curr.shape[0]))
     # 将原始帧和平滑帧并排放置
     frame_out = cv2.hconcat([curr, frame_stabilized_resized])
+
+    # # 初始化 VideoWriter（仅第一次）
+    # if frame_size1 is None:
+    #     frame_size1 = (curr.shape[1], curr.shape[0])
+    #     video_writer_original = cv2.VideoWriter(output_filename_original, codec, fps, frame_size1)
+    # # 初始化 VideoWriter（仅第一次）
+    # if frame_size2 is None:
+    #     frame_size2 = (frame_stabilized.shape[1], frame_stabilized.shape[0])
+    #     video_writer_stabilized = cv2.VideoWriter(output_filename_stabilized, codec, fps, frame_size2)
+    #
+    # # 保存帧到视频
+    # video_writer_original.write(curr)
+    # video_writer_stabilized.write(frame_stabilized)
 
     """
     采用队列
@@ -319,10 +499,12 @@ while True:
 # 释放所有资源
 cap.release()
 cv2.destroyAllWindows()
+# video_writer_original.release()
+# video_writer_stabilized.release()
 
-# -------------------------------
-# 绘制滤波前与滤波后的累计变换曲线
-# -------------------------------
+"""
+绘制滤波前与滤波后的累计变换曲线
+"""
 frames = range(len(original_dx))
 plt.figure(figsize=(12, 8))
 

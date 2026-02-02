@@ -1,4 +1,7 @@
-# 导入必要的库
+"""
+滚动平均滤波
+"""
+
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,10 +10,6 @@ from collections import deque
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-
-"""
-滚动平均滤波
-"""
 # 定义一个函数，用于对曲线进行移动平均滤波，以平滑曲线
 def moving_average(curve, radius):
     window_size = 2 * radius + 1  # 窗口大小
