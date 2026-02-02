@@ -260,7 +260,7 @@ MAX_CORNERS = 200  # 全局特征点最大数量
 QUALITY_LEVEL = 0.01  # 特征点质量水平
 MIN_DISTANCE = 30  # 特征点最小距离
 
-video_path = r'./50.IRV'
+video_path = r'50号阀定位销漏气.IRV'
 
 # 创建数据加载器
 loader = keii_data_load()

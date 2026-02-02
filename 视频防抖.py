@@ -1,7 +1,3 @@
-"""
-光流法
-"""
-
 # 导入必要的库
 import numpy as np
 import cv2
@@ -10,7 +6,7 @@ import cv2
 def moving_average(curve, radius):
     window_size = 2 * radius + 1  # 窗口大小
     f = np.ones(window_size) / window_size  # 创建一个平均滤波器
-    curve_pad = np.pad(curve, (radius, radius), 'edge')  # 对曲线进行边缘填充
+    curve_pad = np.lib.pad(curve, (radius, radius), 'edge')  # 对曲线进行边缘填充
     curve_smoothed = np.convolve(curve_pad, f, mode='same')  # 应用卷积操作进行滤波
     curve_smoothed = curve_smoothed[radius:-radius]  # 去除填充的边缘
     return curve_smoothed
@@ -25,57 +21,41 @@ def smooth_trajectory(trajectory):
 # 定义一个函数，用于修复由于变换导致的边界问题
 def fix_border(frame):
     s = frame.shape  # 获取帧的尺寸
-    T = cv2.getRotationMatrix2D((s[1] / 2, s[0] / 2), 0, 1.1)  # 创建一个旋转矩阵
+    T = cv2.getRotationMatrix2D((s[1] / 2, s[0] / 2), 0, 1.04)  # 创建一个旋转矩阵
     frame = cv2.warpAffine(frame, T, (s[1], s[0]))  # 应用旋转和缩放
     return frame
 
 # 设置平滑半径
-SMOOTHING_RADIUS = 100
-
+SMOOTHING_RADIUS = 50
 # 打开视频文件
-cap = cv2.VideoCapture(r'../Data/24.mp4')
-# cap = cv2.VideoCapture(r'./original_output.mp4')
-
+cap = cv2.VideoCapture(r'D:\input_video.mp4')
 # 检查视频是否成功打开
 if not cap.isOpened():
     print("Error opening video file")
     exit()
-
 # 获取视频的总帧数、宽、高和帧率
 n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = cap.get(cv2.CAP_PROP_FPS)
-
 # 设置视频输出格式
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-
 # 创建视频写入对象
-# out = cv2.VideoWriter('../Data/result1.mp4', fourcc, fps, (2 * w, h))
-out = cv2.VideoWriter('./Basic.mp4', fourcc, fps, (w, h))
-
+out = cv2.VideoWriter('stabilized_video.mp4', fourcc, fps, (2 * w, h))
 # 读取视频的第一帧
 _, prev = cap.read()
 if prev is None:
     print("Error reading video file")
     cap.release()
     exit()
-
 # 将第一帧转换为灰度图
 prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-
 # 初始化变换数组
 transforms = np.zeros((n_frames - 1, 3), np.float32)
 
 # 遍历视频的每一帧，计算帧间变换
 for i in range(n_frames - 2):
-    # Shi-Tomasi 角点检测方法，是 Harris 角点检测的改进版本。
-    # prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3)
-
-    # ORB 特征点检测
-    orb = cv2.ORB_create()
-    keypoints = orb.detect(prev_gray, None)
-    prev_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32)
+    prev_pts = cv2.goodFeaturesToTrack(prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3)
     success, curr = cap.read()
     if not success:
         break
@@ -140,10 +120,11 @@ for i in range(n_frames - 2):
     # 将原始帧和平滑帧并排放置
     frame_out = cv2.hconcat([frame, frame_stabilized])
 
-    #将处理后的帧写入输出视频
-    # out.write(frame_out)
-    out.write(frame_stabilized)
-
+    # 如果输出帧的宽度超过1920，则进行缩放
+    if frame_out.shape[1] > 1920:
+        frame_out = cv2.resize(frame_out, (frame_out.shape[1] // 2, frame_out.shape[0] // 2))
+    # 将处理后的帧写入输出视频
+    out.write(frame_out)
 # 释放视频读取和写入对象
 cap.release()
 out.release()
