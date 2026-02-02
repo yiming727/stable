@@ -127,35 +127,33 @@ def fix_border(frame, extreme_frame_corners, border_size):
     return scaled_frame
 
 
-def u16_to_gray_global(img_u16, global_min, global_max):
-    """使用全局 min/max 转换为 8 位灰度图 - 避免闪烁"""
-    if global_max > global_min:
-        img_normalized = np.clip(
-            (img_u16 - global_min) / (global_max - global_min) * 255,
-            0,
-            255
-        ).astype(np.uint8)
-    else:
-        img_normalized = np.zeros_like(img_u16, dtype=np.uint8)
-    return img_normalized
-
-
-def compute_global_range(video_path, loader, width, height, n_frames, sample_rate=10):
-    """计算视频的全局温度范围"""
-    global_min = np.inf
-    global_max = -np.inf
-
-    sample_indices = range(0, n_frames, sample_rate)
-
-    for i in sample_indices:
-        with open(video_path, "rb") as f:
-            frame_u16 = loader.Open_Frame_IRV(f, i, width, height)
-
-        if frame_u16 is not None:
-            global_min = min(global_min, frame_u16.min())
-            global_max = max(global_max, frame_u16.max())
-
-    return global_min, global_max
+def u16_to_gray_hist_fuse(img_u16):
+    """
+    使用 img_trans.py 的 Hist_fuse16to8 思路，将 16 位温度图转换为 8 位灰度图。
+    注意：该方法是逐帧自适应映射，可能相比“全局 min/max”更容易出现轻微亮度漂移。
+    """
+    u16_channel_data = img_u16
+    hist_fuse = []
+    for c in range(3):  # 通道维度
+        if c == 0:  # 增强中等灰度区域
+            channel_mean = np.mean(u16_channel_data)
+            bounds = (channel_mean - 5000, channel_mean + 5000)
+        elif c == 1:  # 压缩高灰度，拉伸低灰度
+            # 保留更多低灰度细节（5%~60%区间）
+            lower = np.percentile(u16_channel_data, 5)
+            upper = np.percentile(u16_channel_data, 60)
+            bounds = (lower - 2000, upper + 500)
+        elif c == 2:  # 压缩低灰度，拉伸高灰度
+            # 保留更多高灰度细节（40%~95%区间）
+            lower = np.percentile(u16_channel_data, 40)
+            upper = np.percentile(u16_channel_data, 95)
+            bounds = (lower - 500, upper + 2000)
+        channel_data = np.clip(u16_channel_data, bounds[0], bounds[1])
+        # 统一进行归一化处理
+        equalized_channel = cv2.normalize(channel_data, None, 0, 1, cv2.NORM_MINMAX)
+        hist_fuse.append(equalized_channel)
+    u8_img = ((hist_fuse[0].astype(np.float32) + hist_fuse[1] + hist_fuse[2]) / 3 * 255).astype(np.uint8)
+    return u8_img
 
 
 def calculate_optimal_grid_size(width, height, target_grid_size=100, min_grids=3, max_grids=8):
@@ -262,7 +260,7 @@ MAX_CORNERS = 200  # 全局特征点最大数量
 QUALITY_LEVEL = 0.01  # 特征点质量水平
 MIN_DISTANCE = 30  # 特征点最小距离
 
-video_path = r'./20230831171237_00.IRV'
+video_path = r'./50.IRV'
 
 # 创建数据加载器
 loader = keii_data_load()
@@ -289,11 +287,6 @@ grid_size, grid_w, grid_h = calculate_optimal_grid_size(
     max_grids=MAX_GRIDS
 )
 
-# 计算全局温度范围
-global_min, global_max = compute_global_range(
-    video_path, loader, width, height, n_frames, sample_rate=10
-)
-
 fps = 25
 
 # 读取第一帧
@@ -304,8 +297,8 @@ if prev_u16 is None:
     print("Error: 无法读取第一帧")
     exit()
 
-# 转换为 uint8 用于特征检测
-prev_gray = u16_to_gray_global(prev_u16, global_min, global_max)
+# 转换为 uint8 用于特征检测（Hist_fuse16to8）
+prev_gray = u16_to_gray_hist_fuse(prev_u16)
 transforms = np.zeros((n_frames - 1, 3), np.float32)
 
 # ==================== 计算帧间变换 ====================
@@ -329,8 +322,8 @@ for i in range(n_frames - 2):
         print(f"警告: 无法读取帧 {i + 1}")
         break
 
-    # 转换为 uint8
-    curr_gray = u16_to_gray_global(curr_u16, global_min, global_max)
+    # 转换为 uint8（Hist_fuse16to8）
+    curr_gray = u16_to_gray_hist_fuse(curr_u16)
 
     # 网格点光流跟踪
     if len(grid_points) > 0:
@@ -450,8 +443,8 @@ for i in range(n_frames - 2):
     # 使用自动裁剪修复边界
     frame_u16_stabilized = fix_border(frame_u16_stabilized, extreme_frame_corners, border_size)
 
-    # 输出时使用全局归一化
-    frame_gray = u16_to_gray_global(frame_u16_stabilized, global_min, global_max)
+    # 输出为 8bit 灰度（Hist_fuse16to8）
+    frame_gray = u16_to_gray_hist_fuse(frame_u16_stabilized)
 
     # 写入输出视频
     out.write(frame_gray)
