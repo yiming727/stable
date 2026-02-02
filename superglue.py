@@ -103,6 +103,6 @@ def process_video_to_npz(video_path, img_dir='./video_frames', save_dir='./dump_
     print('所有npz文件:', npz_files)
     return npz_files
 
-# if  __name__ == '__main__':
-#     video_path = '../Data/11.mp4'
-#     process_video_to_npz(video_path)
+if  __name__ == '__main__':
+    video_path = '../Data/11.mp4'
+    process_video_to_npz(video_path)

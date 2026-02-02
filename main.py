@@ -34,7 +34,7 @@ def stabilize_video(input_path,output_path,smoothing=50,grid_x=4,grid_y=4,max_tr
     grid_w = w // GRID_SIZE[0]
     grid_h = h // GRID_SIZE[1]
 
-    # superglue特征匹配
+    # 调用superglue特征匹配
     npz_files = process_video_to_npz(input_path)
     for key, file in enumerate(npz_files):
         data = np.load(file)
