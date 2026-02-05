@@ -1,10 +1,9 @@
+import argparse
+from collections import deque
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
-from collections import deque
-import matplotlib.pyplot as plt
-import argparse
 
 from model import MultiModelEnsembleNet
 
