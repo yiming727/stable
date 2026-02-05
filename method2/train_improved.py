@@ -89,6 +89,20 @@ def generate_relative_motion_data(noisy_traj, stable_traj, window_size=30):
 
 class RelativeMotionDataset(Dataset):
     """相对运动数据集"""
+
+    @staticmethod
+    def cumulative_to_relative(cum_traj):
+        """累积轨迹转相对运动"""
+        rel = np.zeros_like(cum_traj)
+        rel[0] = cum_traj[0]
+        rel[1:] = cum_traj[1:] - cum_traj[:-1]
+        return rel
+
+    @staticmethod
+    def relative_to_cumulative(rel_traj):
+        """相对运动转累积轨迹"""
+        return np.cumsum(rel_traj, axis=0)
+
     def __init__(self, inputs, targets):
         self.inputs = torch.tensor(inputs, dtype=torch.float32)
         self.targets = torch.tensor(targets, dtype=torch.float32)
