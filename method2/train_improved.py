@@ -111,7 +111,7 @@ def train_improved_model():
     NUM_LAYERS = 2
 
     # 加载数据
-    folder = "./trajectories"
+    folder = "../trajectories"
     noisy_traj, stable_traj = load_paired_trajectories(folder)
 
     # 转换为相对运动并归一化
