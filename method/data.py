@@ -114,6 +114,6 @@ def extract_video_trajectory_with_plot(video_path, save_path, show_plot=True):
 
 # 示例调用
 if __name__ == "__main__":
-    video_file = "../data/Zooming/28stb.avi"
+    video_file = "../../data/Zooming/28stb.avi"
     output_npy = "./trajectories/video_74_stable.npy"
     extract_video_trajectory_with_plot(video_file, output_npy)

@@ -84,8 +84,8 @@ def train_multi_model_ensemble():
     noisy_traj, noisy_mean, noisy_std = normalize_trajectory(noisy_traj)
     stable_traj, stable_mean, stable_std = normalize_trajectory(stable_traj)
 
-    np.save("stable_mean.npy", stable_mean)
-    np.save("stable_std.npy", stable_std)
+    np.save("../stable_mean.npy", stable_mean)
+    np.save("../stable_std.npy", stable_std)
 
     inputs, targets = generate_from_paired_trajectories(noisy_traj, stable_traj)
     dataset = TrajectoryDataset(inputs, targets)
@@ -132,7 +132,7 @@ def train_multi_model_ensemble():
     plt.savefig("loss_curve.png")
     plt.show()
 
-    torch.save(model.state_dict(), "multi_model_ensemble.pth")
+    torch.save(model.state_dict(), "../multi_model_ensemble.pth")
     print("\n 模型训练完成，已保存为 multi_model_ensemble.pth")
 
     return model, noisy_traj, stable_traj
@@ -142,8 +142,8 @@ def test_and_visualize(model, noisy_traj, stable_traj, window_size=125):
     model = model.to(device)
     model.eval()
 
-    mean = np.load("stable_mean.npy")
-    std = np.load("stable_std.npy")
+    mean = np.load("../stable_mean.npy")
+    std = np.load("../stable_std.npy")
 
     inputs, targets = generate_from_paired_trajectories(noisy_traj, stable_traj, window_size=window_size)
     all_preds = []

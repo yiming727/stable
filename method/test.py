@@ -87,8 +87,8 @@ def main():
     # --------------------------
     WINDOW_SIZE = args.window_size
     MODEL_PATH = args.model
-    MEAN_PATH = "stable_mean.npy"
-    STD_PATH = "stable_std.npy"
+    MEAN_PATH = "../stable_mean.npy"
+    STD_PATH = "../stable_std.npy"
     VIDEO_INPUT = args.input  # 输入视频路径
     VIDEO_OUTPUT = args.output  # 输出视频路径
 

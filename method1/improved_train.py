@@ -116,7 +116,7 @@ def load_paired_trajectories(folder_path):
     return combined_noisy, combined_stable
 
 
-def generate_training_data(noisy_traj, stable_traj, window_size=125, stride=10):
+def generate_training_data(noisy_traj, stable_traj, window_size=125, stride=10, predict_whole=False):
     """
     生成训练数据
     Args:
@@ -124,6 +124,7 @@ def generate_training_data(noisy_traj, stable_traj, window_size=125, stride=10):
         stable_traj: [N, 3]
         window_size: 滑动窗口大小
         stride: 滑动步长 (减小冗余)
+        predict_whole: 是否预测整个窗口的修正量
     """
     inputs, targets = [], []
 
@@ -134,9 +135,20 @@ def generate_training_data(noisy_traj, stable_traj, window_size=125, stride=10):
         # 计算修正量: stable - noisy
         correction = stable_window - noisy_window
         inputs.append(noisy_window)
-        targets.append(correction)  # 预测修正量而非直接预测稳定轨迹
+        
+        if predict_whole:
+            targets.append(correction)  # 预测整个窗口的修正量
+        else:
+            # 只预测最后一个点的修正量 (适合实时推理)
+            targets.append(correction[-1])
 
-    return np.array(inputs), np.array(targets)
+    inputs = np.array(inputs)
+    targets = np.array(targets)
+    
+    print(f"[DEBUG] inputs shape: {inputs.shape}")
+    print(f"[DEBUG] targets shape: {targets.shape}")
+    
+    return inputs, targets
 
 
 class PairedDataset(Dataset):
