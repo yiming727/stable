@@ -415,13 +415,16 @@ class HybridVideoStabilizer(nn.Module):
         self.lstm_branch = EnhancedLSTM(
             input_dim, hidden_dim//2, num_layers=2, dropout=0.2
         )
+        # 投影层：将LSTM输出投影到融合所需的维度
+        self.lstm_proj = nn.Linear(input_dim, hidden_dim // 2)
         
         # ====== 融合与输出 ======
         
-        # 特征融合
+        # 特征融合 (注意: dnn=hidden_dim*2, trans=hidden_dim, tcn=hidden_dim, lstm=hidden_dim//2)
+        fusion_input_dim = hidden_dim * 2 + hidden_dim + hidden_dim + hidden_dim // 2
         self.fusion = nn.Sequential(
-            nn.Linear(hidden_dim*2 + hidden_dim + hidden_dim//2, hidden_dim*2),
-            nn.LayerNorm(hidden_dim*2),
+            nn.Linear(fusion_input_dim, hidden_dim * 2),
+            nn.LayerNorm(hidden_dim * 2),
             nn.ReLU(),
             nn.Dropout(0.2)
         )
@@ -453,8 +456,9 @@ class HybridVideoStabilizer(nn.Module):
         # TCN分支
         tcn_feat = self.tcn_branch(x).mean(dim=1)  # [B, hidden_dim]
         
-        # LSTM分支
-        lstm_feat = self.lstm_branch(x).mean(dim=1)  # [B, hidden_dim//2]
+        # LSTM分支 - EnhancedLSTM返回[B, T, input_dim]，需要投影到hidden_dim//2
+        lstm_feat = self.lstm_branch(x).mean(dim=1)  # [B, input_dim]
+        lstm_feat = self.lstm_proj(lstm_feat)  # [B, hidden_dim//2]
         
         # 融合
         fused = torch.cat([dnn_feat, trans_feat, tcn_feat, lstm_feat], dim=-1)
