@@ -150,19 +150,24 @@ class EnhancedLSTM(nn.Module):
     """增强型LSTM - 带残差连接"""
     def __init__(self, input_dim, hidden_dim, num_layers=2, dropout=0.2):
         super(EnhancedLSTM, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.input_dim = input_dim
+        
         self.lstm = nn.LSTM(
             input_dim, hidden_dim, num_layers,
             batch_first=True, bidirectional=True, dropout=dropout
         )
-        self.fc = nn.Linear(hidden_dim * 2, hidden_dim)
+        # 投影层：将双向输出投影回原始输入维度，用于残差连接
+        self.proj = nn.Linear(hidden_dim * 2, input_dim)
         self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
+        self.layer_norm = nn.LayerNorm(input_dim)
     
     def forward(self, x):
         lstm_out, _ = self.lstm(x)
-        out = self.fc(lstm_out)
+        # 投影到输入维度
+        projected = self.proj(lstm_out)
+        out = projected + x  # 残差连接
         out = self.dropout(out)
-        out = out + x  # 残差连接
         out = self.layer_norm(out)
         return out
 
