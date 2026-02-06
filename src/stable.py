@@ -573,13 +573,13 @@ def parse_args():
     parser.add_argument(
         '--input',
         type=str,
-        default='../24.mp4',
+        default='./6.mp4',
         help='输入视频路径'
     )
     parser.add_argument(
         '--output',
         type=str,
-        default='../result24.mp4',
+        default='./result6.mp4',
         help='输出视频路径'
     )
     parser.add_argument(

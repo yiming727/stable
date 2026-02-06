@@ -2,6 +2,7 @@
 视频稳像算法遮挡鲁棒性测试工具（纯抖动检测版）
 仅使用抖动减少率作为评估指标
 抖动减少 > 0 即为成功
+保留所有中间视频文件
 """
 
 import cv2
@@ -123,6 +124,69 @@ class OcclusionGenerator:
 
 
 # ============================================================================
+# 视频对比生成器
+# ============================================================================
+
+class VideoComparator:
+    """视频对比生成器"""
+
+    @staticmethod
+    def create_side_by_side_video(occluded_path, stabilized_path,
+                                  output_path, max_frames=None):
+        """
+        创建遮挡视频和稳像视频并排对比（无文字标签）
+
+        参数:
+            occluded_path: 遮挡视频路径
+            stabilized_path: 稳像视频路径
+            output_path: 输出视频路径
+            max_frames: 最大帧数
+        """
+        cap_occl = cv2.VideoCapture(occluded_path)
+        cap_stab = cv2.VideoCapture(stabilized_path)
+
+        # 获取视频属性
+        w = int(cap_occl.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap_occl.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap_occl.get(cv2.CAP_PROP_FPS)
+
+        # 计算输出视频尺寸（两个视频横向排列，无标签区域）
+        output_w = w * 2
+        output_h = h
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (output_w, output_h))
+
+        frame_count = 0
+
+        while True:
+            if max_frames is not None and frame_count >= max_frames:
+                break
+
+            ret_occl, frame_occl = cap_occl.read()
+            ret_stab, frame_stab = cap_stab.read()
+
+            if not (ret_occl and ret_stab):
+                break
+
+            # 创建画布（简单拼接）
+            canvas = np.zeros((output_h, output_w, 3), dtype=np.uint8)
+
+            # 放置两个视频帧（左右拼接）
+            canvas[:, 0:w] = frame_occl
+            canvas[:, w:2 * w] = frame_stab
+
+            out.write(canvas)
+            frame_count += 1
+
+        cap_occl.release()
+        cap_stab.release()
+        out.release()
+
+        print(f"    对比视频已保存: {output_path}")
+
+
+# ============================================================================
 # 抖动检测器
 # ============================================================================
 
@@ -224,8 +288,13 @@ class OcclusionRobustnessTest:
         self.output_dir = output_dir
         self.occlusion_gen = OcclusionGenerator()
         self.jitter_detector = JitterDetector()
+        self.comparator = VideoComparator()
 
+        # 创建子目录
         os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.join(output_dir, 'occluded_videos'), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, 'stabilized_videos'), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, 'comparison_videos'), exist_ok=True)
 
     def test_static_occlusion(self,
                               video_path: str,
@@ -248,6 +317,7 @@ class OcclusionRobustnessTest:
         print("测试静态遮挡对稳像质量的影响（纯抖动检测）")
         print("=" * 70)
         print("评判标准: 抖动减少 > 0 即为成功")
+        print("保留所有中间视频文件")
         print("=" * 70)
 
         results = {}
@@ -259,34 +329,60 @@ class OcclusionRobustnessTest:
             for ratio in ratios:
                 print(f"\n  遮挡比例: {ratio * 100:.0f}%")
 
-                # 生成带遮挡的视频
-                occluded_path = self._create_occluded_video(
-                    video_path, ratio, position, num_frames
+                # 生成带遮挡的视频（保存到 occluded_videos 目录）
+                occluded_path = os.path.join(
+                    self.output_dir,
+                    'occluded_videos',
+                    f'occluded_{position}_{int(ratio * 100)}percent.mp4'
                 )
 
-                # 运行稳像算法
-                output_path = os.path.join(
+                print(f"    正在生成遮挡视频...")
+                self._create_occluded_video(
+                    video_path, ratio, position, num_frames, occluded_path
+                )
+                print(f"    遮挡视频已保存: {occluded_path}")
+
+                # 稳像后视频路径
+                stabilized_path = os.path.join(
                     self.output_dir,
+                    'stabilized_videos',
                     f'stabilized_{position}_{int(ratio * 100)}percent.mp4'
                 )
 
                 try:
                     # 稳像处理
                     print(f"    正在稳像...")
-                    self.stabilizer.stabilize(occluded_path, output_path)
+                    self.stabilizer.stabilize(occluded_path, stabilized_path)
+                    print(f"    稳像视频已保存: {stabilized_path}")
 
                     # 评估抖动减少率
                     print(f"    正在评估抖动...")
                     jitter_metrics = self.jitter_detector.compute_jitter_reduction(
-                        occluded_path, output_path, max_frames=num_frames
+                        occluded_path, stabilized_path, max_frames=num_frames
                     )
 
                     # 判断成功：抖动减少 > 0
                     is_success = jitter_metrics['jitter_reduction'] > 0
 
+                    # 创建对比视频（简单拼接，无文字）
+                    comparison_path = os.path.join(
+                        self.output_dir,
+                        'comparison_videos',
+                        f'comparison_{position}_{int(ratio * 100)}percent.mp4'
+                    )
+
+                    print(f"    正在生成对比视频...")
+                    self.comparator.create_side_by_side_video(
+                        occluded_path, stabilized_path,
+                        comparison_path, max_frames=num_frames
+                    )
+
                     results[position][ratio] = {
                         'success': is_success,
-                        'metrics': jitter_metrics
+                        'metrics': jitter_metrics,
+                        'occluded_video': occluded_path,
+                        'stabilized_video': stabilized_path,
+                        'comparison_video': comparison_path
                     }
 
                     if is_success:
@@ -304,13 +400,12 @@ class OcclusionRobustnessTest:
                     results[position][ratio] = {
                         'success': False,
                         'error': f'算法异常: {str(e)}',
-                        'metrics': None
+                        'metrics': None,
+                        'occluded_video': occluded_path,
+                        'stabilized_video': None,
+                        'comparison_video': None
                     }
                     print(f"    ✗ 稳像失败: 算法异常 - {e}")
-
-                # 清理临时文件
-                if os.path.exists(occluded_path):
-                    os.remove(occluded_path)
 
         # 保存结果
         self._save_results(results, 'static_occlusion_test_jitter_only.json')
@@ -339,6 +434,7 @@ class OcclusionRobustnessTest:
         print("测试运动遮挡对稳像质量的影响（纯抖动检测）")
         print("=" * 70)
         print("评判标准: 抖动减少 > 0 即为成功")
+        print("保留所有中间视频文件")
         print("=" * 70)
 
         results = {}
@@ -346,34 +442,60 @@ class OcclusionRobustnessTest:
         for ratio in ratios:
             print(f"\n遮挡比例: {ratio * 100:.0f}%")
 
-            # 生成带运动遮挡的视频
-            occluded_path = self._create_moving_occluded_video(
-                video_path, ratio, num_frames
+            # 生成带运动遮挡的视频（保存到 occluded_videos 目录）
+            occluded_path = os.path.join(
+                self.output_dir,
+                'occluded_videos',
+                f'occluded_moving_{int(ratio * 100)}percent.mp4'
             )
 
-            # 运行稳像算法
-            output_path = os.path.join(
+            print(f"  正在生成运动遮挡视频...")
+            self._create_moving_occluded_video(
+                video_path, ratio, num_frames, occluded_path
+            )
+            print(f"  遮挡视频已保存: {occluded_path}")
+
+            # 稳像后视频路径
+            stabilized_path = os.path.join(
                 self.output_dir,
+                'stabilized_videos',
                 f'stabilized_moving_{int(ratio * 100)}percent.mp4'
             )
 
             try:
                 # 稳像处理
                 print(f"  正在稳像...")
-                self.stabilizer.stabilize(occluded_path, output_path)
+                self.stabilizer.stabilize(occluded_path, stabilized_path)
+                print(f"  稳像视频已保存: {stabilized_path}")
 
                 # 评估抖动减少率
                 print(f"  正在评估抖动...")
                 jitter_metrics = self.jitter_detector.compute_jitter_reduction(
-                    occluded_path, output_path, max_frames=num_frames
+                    occluded_path, stabilized_path, max_frames=num_frames
                 )
 
                 # 判断成功：抖动减少 > 0
                 is_success = jitter_metrics['jitter_reduction'] > 0
 
+                # 创建对比视频（简单拼接，无文字）
+                comparison_path = os.path.join(
+                    self.output_dir,
+                    'comparison_videos',
+                    f'comparison_moving_{int(ratio * 100)}percent.mp4'
+                )
+
+                print(f"  正在生成对比视频...")
+                self.comparator.create_side_by_side_video(
+                    occluded_path, stabilized_path,
+                    comparison_path, max_frames=num_frames
+                )
+
                 results[ratio] = {
                     'success': is_success,
-                    'metrics': jitter_metrics
+                    'metrics': jitter_metrics,
+                    'occluded_video': occluded_path,
+                    'stabilized_video': stabilized_path,
+                    'comparison_video': comparison_path
                 }
 
                 if is_success:
@@ -391,13 +513,12 @@ class OcclusionRobustnessTest:
                 results[ratio] = {
                     'success': False,
                     'error': f'算法异常: {str(e)}',
-                    'metrics': None
+                    'metrics': None,
+                    'occluded_video': occluded_path,
+                    'stabilized_video': None,
+                    'comparison_video': None
                 }
                 print(f"  ✗ 稳像失败: 算法异常 - {e}")
-
-            # 清理临时文件
-            if os.path.exists(occluded_path):
-                os.remove(occluded_path)
 
         # 保存结果
         self._save_results(results, 'moving_occlusion_test_jitter_only.json')
@@ -407,7 +528,7 @@ class OcclusionRobustnessTest:
 
         return results
 
-    def _create_occluded_video(self, video_path, ratio, position, num_frames):
+    def _create_occluded_video(self, video_path, ratio, position, num_frames, output_path):
         """创建带静态遮挡的视频"""
         cap = cv2.VideoCapture(video_path)
 
@@ -415,13 +536,8 @@ class OcclusionRobustnessTest:
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
 
-        temp_path = os.path.join(
-            self.output_dir,
-            f'temp_occluded_{position}_{int(ratio * 100)}.mp4'
-        )
-
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(temp_path, fourcc, fps, (w, h))
+        out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
         for i in range(num_frames):
             ret, frame = cap.read()
@@ -436,9 +552,7 @@ class OcclusionRobustnessTest:
         cap.release()
         out.release()
 
-        return temp_path
-
-    def _create_moving_occluded_video(self, video_path, ratio, num_frames):
+    def _create_moving_occluded_video(self, video_path, ratio, num_frames, output_path):
         """创建带运动遮挡的视频"""
         cap = cv2.VideoCapture(video_path)
 
@@ -446,13 +560,8 @@ class OcclusionRobustnessTest:
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
 
-        temp_path = os.path.join(
-            self.output_dir,
-            f'temp_moving_occluded_{int(ratio * 100)}.mp4'
-        )
-
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(temp_path, fourcc, fps, (w, h))
+        out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
         position = [w // 2, h // 2]
         velocity = [10, 5]
@@ -469,8 +578,6 @@ class OcclusionRobustnessTest:
 
         cap.release()
         out.release()
-
-        return temp_path
 
     def _save_results(self, results, filename):
         """保存测试结果到 JSON 文件"""
@@ -489,7 +596,7 @@ class OcclusionRobustnessTest:
 
     def _plot_static_results(self, results):
         """可视化静态遮挡测试结果"""
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial']
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'Arial']
         plt.rcParams['axes.unicode_minus'] = False
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -538,7 +645,7 @@ class OcclusionRobustnessTest:
 
     def _plot_moving_results(self, results):
         """可视化运动遮挡测试结果"""
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial']
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'Arial']
         plt.rcParams['axes.unicode_minus'] = False
 
         ratios = []
@@ -608,7 +715,7 @@ def main():
     )
 
     # 测试视频路径
-    video_path = './24.mp4'
+    video_path = './11.mp4'
 
     # 1. 测试静态遮挡
     print("\n开始测试静态遮挡...")
@@ -686,7 +793,13 @@ def main():
     else:
         print(f"  → 所有测试通过")
 
-    print("\n✅ 测试完成！结果已保存到 ./occlusion_test_results/")
+    print("\n" + "=" * 70)
+    print("✅ 测试完成！")
+    print(f"结果保存在: ./occlusion_test_results/")
+    print(f"  - 遮挡视频: ./occlusion_test_results/occluded_videos/")
+    print(f"  - 稳像视频: ./occlusion_test_results/stabilized_videos/")
+    print(f"  - 对比视频: ./occlusion_test_results/comparison_videos/")
+    print("=" * 70)
 
 
 if __name__ == '__main__':
