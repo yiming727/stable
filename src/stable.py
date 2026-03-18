@@ -569,62 +569,15 @@ def parse_args():
         description="视频稳定处理工具（支持动态网格划分）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-
-    parser.add_argument(
-        '--input',
-        type=str,
-        default='./6.mp4',
-        help='输入视频路径'
-    )
-    parser.add_argument(
-        '--output',
-        type=str,
-        default='./result6.mp4',
-        help='输出视频路径'
-    )
-    parser.add_argument(
-        '--smoothing',
-        type=int,
-        default=50,
-        help='平滑半径（值越大平滑效果越强）'
-    )
-    parser.add_argument(
-        '--target_grid_size',
-        type=int,
-        default=100,
-        help='目标网格尺寸（像素），每个网格的理想边长'
-    )
-    parser.add_argument(
-        '--min_grids',
-        type=int,
-        default=3,
-        help='最小网格数（每个维度）'
-    )
-    parser.add_argument(
-        '--max_grids',
-        type=int,
-        default=8,
-        help='最大网格数（每个维度）'
-    )
-    parser.add_argument(
-        '--max_corners',
-        type=int,
-        default=200,
-        help='全局特征点最大数量'
-    )
-    parser.add_argument(
-        '--quality_level',
-        type=float,
-        default=0.01,
-        help='特征点质量水平'
-    )
-    parser.add_argument(
-        '--min_distance',
-        type=int,
-        default=30,
-        help='特征点最小距离'
-    )
-
+    parser.add_argument('--input', type=str, default='./2.mp4', help='输入视频路径')
+    parser.add_argument('--output', type=str, default='./result6.mp4', help='输出视频路径')
+    parser.add_argument('--smoothing', type=int, default=50, help='平滑半径（值越大平滑效果越强）')
+    parser.add_argument('--target_grid_size', type=int, default=100, help='目标网格尺寸（像素），每个网格的理想边长')
+    parser.add_argument('--min_grids', type=int, default=3, help='最小网格数（每个维度）')
+    parser.add_argument('--max_grids', type=int, default=8, help='最大网格数（每个维度）')
+    parser.add_argument('--max_corners', type=int, default=200, help='全局特征点最大数量')
+    parser.add_argument('--quality_level', type=float, default=0.01, help='特征点质量水平')
+    parser.add_argument('--min_distance', type=int, default=30, help='特征点最小距离')
     return parser.parse_args()
 
 
