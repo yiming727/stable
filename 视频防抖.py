@@ -28,7 +28,7 @@ def fix_border(frame):
 # 设置平滑半径
 SMOOTHING_RADIUS = 50
 # 打开视频文件
-cap = cv2.VideoCapture(r'./5.mp4')
+cap = cv2.VideoCapture(r'./12.mp4')
 # 检查视频是否成功打开
 if not cap.isOpened():
     print("Error opening video file")
