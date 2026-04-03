@@ -556,9 +556,9 @@ def parse_args():
         description="视频稳定处理工具（动态网格 Harris + Shi-Tomasi + FB-check + RANSAC + ECC兜底）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument('--input',            type=str,   default='./12.mp4',
+    parser.add_argument('--input',            type=str,   default='./1.mp4',
                         help='输入视频路径')
-    parser.add_argument('--output',           type=str,   default='./result.mp4',
+    parser.add_argument('--output',           type=str,   default='./result1.mp4',
                         help='输出视频路径')
     parser.add_argument('--smoothing',        type=int,   default=50,
                         help='平滑半径（帧数）')
