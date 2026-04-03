@@ -15,7 +15,7 @@ def frame2vid(src, vidDir):
     print("排序后的图像列表:")
     print(images)
 
-    video = cv2.VideoWriter(vidDir, cv2.VideoWriter_fourcc(*'mp4v'), 30, (640, 360))
+    video = cv2.VideoWriter(vidDir, cv2.VideoWriter_fourcc(*'mp4v'), 30, (320, 240))
 
     for image in images:
         video.write(cv2.imread(os.path.join(src, image)))
@@ -25,4 +25,4 @@ def frame2vid(src, vidDir):
 
 if __name__ == '__main__':
     import re  # 导入正则表达式模块
-    frame2vid(src='./07', vidDir='./07.mp4')
+    frame2vid(src='./result19', vidDir='./9.mp4')

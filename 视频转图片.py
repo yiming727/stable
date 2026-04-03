@@ -28,6 +28,6 @@ def extract_frames(video_path, output_folder):
     cap.release()
 
 if __name__ == '__main__':
-    video_path = './result24.mp4'
-    output_folder = './result24'
+    video_path = './8.mp4'
+    output_folder = './result8'
     extract_frames(video_path, output_folder)
