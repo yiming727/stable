@@ -64,14 +64,10 @@ def fix_border(frame):
 # --------------------------
 def parse_args():
     parser = argparse.ArgumentParser(description="视频稳定处理（深度学习版）")
-    parser.add_argument('--input', type=str, default='24.mp4',
-                        help='输入视频路径（默认：input.mp4）')
-    parser.add_argument('--output', type=str, default='result24.mp4',
-                        help='输出视频路径（默认：output.mp4）')
-    parser.add_argument('--model', type=str, default='multi_model_ensemble.pth',
-                        help='模型权重路径')
-    parser.add_argument('--window_size', type=int, default=125,
-                        help='滑动窗口大小')
+    parser.add_argument('--input', type=str, default='24.mp4',help='输入视频路径（默认：input.mp4）')
+    parser.add_argument('--output', type=str, default='result24.mp4',help='输出视频路径（默认：output.mp4）')
+    parser.add_argument('--model', type=str, default='multi_model_ensemble.pth',help='模型权重路径')
+    parser.add_argument('--window_size', type=int, default=125,help='滑动窗口大小')
     return parser.parse_args()
 
 
@@ -87,8 +83,8 @@ def main():
     # --------------------------
     WINDOW_SIZE = args.window_size
     MODEL_PATH = args.model
-    MEAN_PATH = "../stable_mean.npy"
-    STD_PATH = "../stable_std.npy"
+    MEAN_PATH = "./stable_mean.npy"
+    STD_PATH = "./stable_std.npy"
     VIDEO_INPUT = args.input  # 输入视频路径
     VIDEO_OUTPUT = args.output  # 输出视频路径
 
