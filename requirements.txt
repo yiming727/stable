@@ -1,0 +1,24 @@
+# 红外/可见光视频稳像 monorepo 运行期依赖
+#
+# 参考环境：conda env `py39`（Python 3.9.23）
+#   cv2 4.10.0(+ximgproc) / torch 2.8.0+cu129 / torchvision 0.23.0+cu129
+#   numpy 1.26.4 / scipy 1.13.1 / scikit-image 0.24.0 / matplotlib 3.9.2 / Pillow 11.3.0
+#
+# 安装：pip install -r requirements.txt
+
+# ★ 必须是 -contrib 版，不能是普通的 opencv-python：
+#   offline/basic/u16/img_trans.py 用了 cv2.ximgproc.guidedFilter（见该文件 637、667 行），
+#   普通版没有 ximgproc 子模块，装错会在运行到那里时才报错。
+opencv-contrib-python>=4.10
+
+numpy>=1.26,<2          # py39 环境是 1.26.4；cv2 4.10 与 torch 2.8 都是对着它编译的
+scipy>=1.13
+scikit-image>=0.24
+
+# 只有 offlineEnhanced/models 的 SuperGlue/SuperPoint 需要 torch。
+# 若只跑纯 OpenCV 的稳像流程，可以跳过这三个以省下数 GB。
+torch>=2.8
+torchvision>=0.23
+
+matplotlib>=3.9
+Pillow>=11

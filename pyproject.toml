@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stable-monorepo"
+version = "0.1.0"
+description = "红外/可见光视频稳像：离线 + 在线，基础 + 增强，含共享模块 common/"
+requires-python = ">=3.9"
+
+# ---------------------------------------------------------------------------
+# 这里**故意不写** [project.dependencies]
+#
+# 依赖声明统一放在 requirements.txt。原因：本机 py39 环境里的
+# cv2 4.10 / torch 2.8+cu129 / numpy 1.26.4 是手工对齐好 ABI 的，
+# 一旦让 pip 去索引解析依赖，numpy 很容易被升到 2.x，
+# 进而连带弄坏 cv2 与 torch。
+#
+# 因此安装方式固定为：
+#     pip install -e . --no-deps
+#     pip install -r requirements.txt      # 需要装依赖时
+# ---------------------------------------------------------------------------
+
+[tool.setuptools]
+# ★ 必须显式声明。留空的话 setuptools 的 flat-layout 自动发现会同时看到
+#   common/、offline/、online/、tools/ 四个"顶层包"并直接报错退出：
+#   "Multiple top-level packages discovered in a flat-layout"
+packages = ["common"]
