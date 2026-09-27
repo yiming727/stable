@@ -85,11 +85,17 @@ git check-ignore -v offline/basic/u16/20230831171237_00.IRV \
 
 ```bash
 cd offline/basic/src       && python stable.py
-cd offline/basic/u16       && python stable.py     # 读同目录的 .IRV，仓库里唯一自带的数据
 cd offline/enhanced        && python main.py
 cd online/basic            && python stable.py     # 需要摄像头
 cd online/enhanced/method1 && python train.py      # 读 ../trajectories
+
+# offline/basic/u16 —— 仓库里唯一自带数据、能真正端到端跑的一段（已实测 596 帧通过）
+cd offline/basic/u16 && python stable.py --input 20230831171237_00.IRV --output out.mp4
 ```
+
+⚠️ `u16/stable.py` 的默认 `--input` 是 `50号阀定位销漏气.IRV`，而仓库里实际带的文件叫
+`20230831171237_00.IRV` —— 所以**必须显式传 `--input`**，直接 `python stable.py` 会因找不到文件而失败。
+（这是合并前就存在的问题，见"已知问题"第 8 条。）
 
 合并后有两处相对路径的**深度变了**（都已失效，仅作记录）：
 
@@ -168,6 +174,10 @@ cd online/enhanced/method1 && python train.py      # 读 ../trajectories
 7. **`common/stability_metrics.py` 继承的两个隐患**（未改）：
    `compute_distortion_value` 在序列为空时抛 `ValueError`；
    `compute_stability_score` 在 FFT 全零时除以零。
+8. **`offline/basic/u16/stable.py` 的默认输入文件名对不上**：默认 `--input` 是
+   `50号阀定位销漏气.IRV`，但仓库里实际带的样本叫 `20230831171237_00.IRV`，
+   所以直接 `python stable.py` 会失败，必须显式传 `--input`（见第 4 节的命令）。
+   这是合并前就有的问题。
 
 ---
 
