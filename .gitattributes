@@ -1,0 +1,26 @@
+# 显式声明二进制文件类型。
+#
+# 本机 core.autocrlf=true，git 通常能自动识别二进制，但这些是仓库里体积最大、
+# 最不该被文本转换碰到的文件，显式标注是廉价保险。
+# 一旦 CRLF 转换改动了它们，`git rev-parse HEAD:<prefix>` 就不再等于源仓库的
+# 根 tree SHA——那正是合并时用来证明"内容零改动"的判据。
+
+# 红外原始数据（KEII-IR 格式，88 MiB）
+*.IRV   binary
+
+# 神经网络权重（SuperGlue / SuperPoint，共 97 MiB）
+*.pth   binary
+
+# 训练轨迹数据
+*.npy   binary
+
+# 视频
+*.mp4   binary
+*.avi   binary
+*.mov   binary
+
+# 图片
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.bmp   binary
